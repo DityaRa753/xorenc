@@ -1,7 +1,13 @@
 #include <iostream>
 #include <fstream>
-#include <cstdlib>
-#include <chrono>
+
+extern "C" {
+#include <getopt.h>
+}
+
+enum { max_key_size = 5242880, buffer_size = 16 };
+const std::string help_message = "Fully help.";
+const std::string mini_help = "Usage: flag -h or --help for help";
 
 //is implementation must be better, use stat!
 size_t getFileSize(std::ifstream &file)
@@ -12,11 +18,124 @@ size_t getFileSize(std::ifstream &file)
   return length;
 }
 
+void parse_key_val(const char *str, unsigned int &keysize, char &type)
+{
+  using namespace std;
+  char *endptr;
+  keysize = strtol(str, &endptr, 10);
+  if(*endptr) {
+    if(*endptr == 'k') {
+      if(keysize == 0 || keysize > 5) {
+        cerr << "Invalid specified range kilobytes, '" << keysize 
+          << "' " << "should be 0 > kilobytes < 5." << endl;
+        exit(EXIT_FAILURE);
+      }
+      type = 'k';
+    } else {
+      cerr << "Invalid key size'" << endptr << "'" << endl <<
+        mini_help << endl;
+      exit(EXIT_FAILURE);
+    }
+  }
+  if(keysize == 0 || keysize > max_key_size) {
+    cerr << "Invalid specified range bytes, '" << keysize << "'"
+      << " should be 0 > bytes < " << max_key_size <<
+      endl << mini_help << endl;
+    exit(EXIT_FAILURE);
+  }
+
+}
+
+void gen_key(unsigned int size, const std::string &str)
+{
+  using namespace std;
+  enum {buff_size = 8};
+  std::ofstream out(str, std::ios::out | std::ios::binary);
+  if(!out.is_open()) {
+    std::cerr << "Error to create file '" << str << "'." << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  srand(time(0));
+  char random;
+  int randv;
+  char buff[buff_size];
+  for(unsigned int i = 0, j; i < size; i += buff_size) {
+    for(j = 0; j < i; j++) {
+      cout << "i: " << i << " j: " << j << endl;
+      randv = rand();
+      random = 10 + randv % 126;
+      buff[j] = random;
+    }
+    out.write(buff, j);
+  }
+  out.close();
+}
+
 int main(int argc, char **argv)
 {
   using namespace std;
   //max 5MB key.
-  enum { max_key_size = 5242880, buffer_size = 16 };
+  const char *short_opt = "ho:k:";
+  const struct option long_opt[] = {
+    {"help", no_argument, 0, 'h'},
+    {"output", required_argument, 0, 'o'},
+    {"key-size", required_argument, 0, 'k'},
+    {0, 0, 0, 0}
+  };
+  static const char *mandatory_args[] = {"enc", "dec", "keygen"};
+  string outfile(""), infile("");
+  unsigned int keysize = 0;
+  char type = 'B';
+  int res, opt_idx;
+  while((res = getopt_long(argc, argv, short_opt, long_opt, &opt_idx)) != -1) {
+    switch(res) {
+    case 'h': {
+      cout << help_message << endl;
+      exit(EXIT_SUCCESS);
+    }
+    case 'o': {
+      outfile = optarg;
+      break;
+    }
+    case 'k': {
+      // may be an exit.
+      parse_key_val(optarg, keysize, type);
+      break;
+    }
+    case '?': default: {
+      cout << "! " << optarg << endl;
+      cerr << "Option argument is not exists!" << endl << mini_help << endl;
+      exit(EXIT_FAILURE);
+    }
+    }
+  }
+  string arg;
+  for(int i = optind; i < argc; i++) {
+    arg = string(argv[i]);
+    // maybe better use map for arg ? : TODO
+    if(!arg.compare(mandatory_args[0])) {
+      break;
+    } else if(!arg.compare(mandatory_args[1])) {
+      break;
+    } else if(!arg.compare(mandatory_args[2])) {
+      if(outfile.empty()) {
+        outfile = "keyfile.bin";
+      }
+      if(!keysize) {
+        cerr << "Define key size! use flag -k or --key-size" << endl;
+      }
+      if(type == 'k')
+        gen_key(keysize*1024, outfile);
+      else {
+        gen_key(keysize, outfile);
+      }
+      return EXIT_SUCCESS;
+    } else {
+      cerr << "'" << argv[i] << "'" << 
+        " there is no such mandatory argument!" << endl << mini_help << endl;
+    }
+  }
+  exit(0);
   ifstream key(argv[3], ios::in | ios::binary);
   if(!key.is_open()) {
     cerr << "Error open file: " << argv[3] << endl;
@@ -64,10 +183,6 @@ int main(int argc, char **argv)
     key.close();
     exit(EXIT_FAILURE);
   }
-  using namespace std::chrono;
-  // too slow implementation.
-  auto start = high_resolution_clock::now();
-  //for all input file
   char tmp;
   for(int bytes = ifs.gcount(); bytes > 0; bytes = ifs.gcount()) {
     //for buffer
@@ -81,9 +196,6 @@ int main(int argc, char **argv)
     ofs.write(ifs_buff, bytes);
     ifs.read(ifs_buff, buffer_size);
   }
-  auto stop = high_resolution_clock::now();
-  auto duration = duration_cast<seconds>(stop - start);
-  cout << duration.count() << endl;
   delete[] key_buff;
   delete[] ifs_buff;
   ifs.close();
